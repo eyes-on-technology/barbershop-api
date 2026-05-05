@@ -64,7 +64,7 @@ def decode_token(token: str) -> dict:
         raise InvalidTokenException()
 
 
-async def get_current_user(credentials: HTTPAuthCredentials = Depends(security)) -> dict:
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> dict:
     """Dependência para obter usuário autenticado"""
     token = credentials.credentials
     payload = decode_token(token)
