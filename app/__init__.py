@@ -1,0 +1,3 @@
+"""
+Barbershop API - Aplicação FastAPI
+"""
