@@ -10,5 +10,5 @@ sqlalchemy==2.0.23
 supabase==2.3.5
 python-multipart==0.0.6
 httpx==0.25.2
-pyjwt==2.8.1
+pyjwt>=2.8.0
 cryptography==41.0.7
