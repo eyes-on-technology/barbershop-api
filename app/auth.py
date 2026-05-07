@@ -104,6 +104,9 @@ async def get_current_prestador(current_user: dict = Depends(get_current_user)) 
 
 async def get_current_admin(current_user: dict = Depends(get_current_user)) -> dict:
     """Dependência para obter admin autenticado"""
-    # Implementar lógica de verificação de admin no banco de dados
-    # Por enquanto, apenas verifica se o usuário está autenticado
+    if current_user["type"] != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Acesso restrito a administradores",
+        )
     return current_user

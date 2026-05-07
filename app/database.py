@@ -443,7 +443,29 @@ class SupabaseDB:
         except Exception as e:
             logger.error(f"Erro ao deletar agendamento: {e}")
             return False
+    # ==================== ADMINS ====================
 
+    def get_admin_by_email(self, email: str) -> Optional[dict]:
+        """Busca um admin pelo email"""
+        response = (
+            self.client.table("admins")
+            .select("*")
+            .eq("email", email)
+            .single()
+            .execute()
+        )
+        return response.data
+
+    def get_admin_by_id(self, admin_id: str) -> Optional[dict]:
+        """Busca um admin pelo ID"""
+        response = (
+            self.client.table("admins")
+            .select("*")
+            .eq("id", admin_id)
+            .single()
+            .execute()
+        )
+        return response.data
 
 # Instância global do banco de dados
 db = SupabaseDB()

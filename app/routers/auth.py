@@ -55,7 +55,13 @@ async def login(request: LoginRequest):
             user_type = "prestador"
             user_data = prestador
         else:
-            raise InvalidCredentialsException()
+        # ← ADICIONAR ISSO
+            admin = db.get_admin_by_email(email)
+            if admin:
+                user_type = "admin"
+                user_data = admin
+            else:
+                raise InvalidCredentialsException()
 
     # Criar token
     access_token_expires = timedelta(minutes=settings.jwt_expiration_minutes)
