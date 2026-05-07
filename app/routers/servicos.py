@@ -9,7 +9,7 @@ from app.schemas import (
     ServicoResponse,
     PaginatedResponse,
 )
-from app.database import db, SupabaseDB
+from app.database import db
 from app.auth import get_current_admin
 from app.dependencies import get_pagination
 from app.utils.exceptions import NotFoundException
