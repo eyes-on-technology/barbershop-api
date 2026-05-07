@@ -445,17 +445,6 @@ class SupabaseDB:
             return False
     # ==================== ADMINS ====================
 
-    def get_admin_by_email(self, email: str) -> Optional[dict]:
-        """Busca um admin pelo email"""
-        response = (
-            self.client.table("admins")
-            .select("*")
-            .eq("email", email)
-            .single()
-            .execute()
-        )
-        return response.data
-
     def get_admin_by_id(self, admin_id: str) -> Optional[dict]:
         """Busca um admin pelo ID"""
         response = (

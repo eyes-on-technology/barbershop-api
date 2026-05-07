@@ -62,7 +62,11 @@ async def login(request: LoginRequest):
                 user_data = admin
             else:
                 raise InvalidCredentialsException()
-
+            if prestador:
+            # Se for admin, type = "admin", senão "prestador"
+                user_type = "admin" if prestador.get("is_admin") else "prestador"
+                user_data = prestador
+                
     # Criar token
     access_token_expires = timedelta(minutes=settings.jwt_expiration_minutes)
     access_token = create_access_token(
