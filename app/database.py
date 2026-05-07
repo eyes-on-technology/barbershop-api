@@ -170,5 +170,60 @@ class Database:
         response = self.client.table("disponibilidades").delete().eq("id", disponibilidade_id).execute()
         return len(response.data) > 0
 
+    # ==================== HORARIOS FUNCIONAMENTO ====================
+
+def get_horarios_funcionamento(self) -> list:
+    response = self.client.table("horarios_funcionamento").select("*").order("dia_semana").execute()
+    return response.data or []
+
+def update_horario_funcionamento(self, dia_semana: int, data: dict) -> Optional[dict]:
+    response = self.client.table("horarios_funcionamento").update(data).eq("dia_semana", dia_semana).execute()
+    return response.data[0] if response.data else None
+
+# ==================== DIAS BLOQUEADOS ====================
+
+def get_dias_bloqueados(self) -> list:
+    response = self.client.table("dias_bloqueados").select("*").order("data").execute()
+    return response.data or []
+
+def create_dia_bloqueado(self, data: dict) -> Optional[dict]:
+    try:
+        response = self.client.table("dias_bloqueados").insert(data).execute()
+        return response.data[0] if response.data else None
+    except Exception:
+        return None
+
+def delete_dia_bloqueado(self, data: str) -> bool:
+    response = self.client.table("dias_bloqueados").delete().eq("data", data).execute()
+    return len(response.data) > 0
+
+# ==================== AGENDAMENTOS - métodos que faltam ====================
+
+def count_agendamentos_por_horario(self, data_hora: str, prestador_id: str) -> int:
+    response = (
+        self.client.table("agendamentos")
+        .select("id", count="exact")
+        .eq("data_hora", data_hora)
+        .eq("prestador_id", prestador_id)
+        .in_("status", ["pendente", "confirmado"])
+        .execute()
+    )
+    return response.count or 0
+
+def list_agendamentos_cliente(self, cliente_id: str, page: int = 1, limit: int = 10, status: Optional[str] = None):
+    offset = (page - 1) * limit
+    query = self.client.table("agendamentos").select("*", count="exact").eq("cliente_id", cliente_id)
+    if status:
+        query = query.eq("status", status)
+    response = query.range(offset, offset + limit - 1).execute()
+    return response.data or [], response.count or 0
+
+def list_agendamentos_prestador(self, prestador_id: str, page: int = 1, limit: int = 10, status: Optional[str] = None):
+    offset = (page - 1) * limit
+    query = self.client.table("agendamentos").select("*", count="exact").eq("prestador_id", prestador_id)
+    if status:
+        query = query.eq("status", status)
+    response = query.range(offset, offset + limit - 1).execute()
+    return response.data or [], response.count or 0
 
 db = Database()

@@ -164,6 +164,76 @@ async def create_disponibilidade_admin(
         raise HTTPException(status_code=400, detail="Erro ao criar disponibilidade")
     return {"success": True, "data": disponibilidade}
 
+# ==================== HORÁRIOS (apenas admin) ====================
+
+@router.get("/horarios")
+async def get_horarios(current_user: dict = Depends(get_current_admin)):
+    """Lista configuração de horários de funcionamento"""
+    return {"data": db.get_horarios_funcionamento()}
+
+
+@router.put("/horarios/{dia_semana}")
+async def update_horario(
+    dia_semana: int,
+    ativo: Optional[bool] = None,
+    hora_inicio: Optional[str] = None,
+    hora_fim: Optional[str] = None,
+    hora_almoco_inicio: Optional[str] = None,
+    hora_almoco_fim: Optional[str] = None,
+    current_user: dict = Depends(get_current_admin),
+):
+    """
+    Atualiza horário de um dia da semana (0=domingo ... 6=sábado)
+    """
+    update_data = {}
+    if ativo is not None:
+        update_data["ativo"] = ativo
+    if hora_inicio:
+        update_data["hora_inicio"] = hora_inicio
+    if hora_fim:
+        update_data["hora_fim"] = hora_fim
+    if hora_almoco_inicio:
+        update_data["hora_almoco_inicio"] = hora_almoco_inicio
+    if hora_almoco_fim:
+        update_data["hora_almoco_fim"] = hora_almoco_fim
+
+    if not update_data:
+        raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
+
+    resultado = db.update_horario_funcionamento(dia_semana, update_data)
+    return {"success": True, "data": resultado}
+
+
+@router.get("/dias-bloqueados")
+async def get_dias_bloqueados(current_user: dict = Depends(get_current_admin)):
+    """Lista dias bloqueados"""
+    return {"data": db.get_dias_bloqueados()}
+
+
+@router.post("/dias-bloqueados")
+async def create_dia_bloqueado(
+    data: str,
+    motivo: Optional[str] = None,
+    current_user: dict = Depends(get_current_admin),
+):
+    """Bloqueia um dia (ex: folga, feriado). Formato: 2026-05-10"""
+    resultado = db.create_dia_bloqueado({"data": data, "motivo": motivo})
+    if not resultado:
+        raise HTTPException(status_code=400, detail="Erro ao bloquear dia — verifique se já está bloqueado")
+    return {"success": True, "data": resultado}
+
+
+@router.delete("/dias-bloqueados/{data}")
+async def delete_dia_bloqueado(
+    data: str,
+    current_user: dict = Depends(get_current_admin),
+):
+    """Desbloqueia um dia. Formato: 2026-05-10"""
+    success = db.delete_dia_bloqueado(data)
+    if not success:
+        raise HTTPException(status_code=404, detail="Dia não encontrado")
+    return {"success": True, "message": f"Dia {data} desbloqueado"}
+
 
 @router.get("/health")
 async def health_check():

@@ -1,142 +1,81 @@
 """
-Router de disponibilidades
+Router de disponibilidades — calcula horários livres dinamicamente
 """
-from fastapi import APIRouter, Depends, HTTPException, status, Query
-from datetime import datetime
-from typing import Optional, List
-from app.schemas import (
-    DisponibilidadeCreate,
-    DisponibilidadeResponse,
-    PrestadorResponse,
-)
+from fastapi import APIRouter, Query
+from datetime import date, datetime, timedelta
+from typing import Optional
 from app.database import db
-from app.auth import get_current_prestador
-from app.utils.exceptions import NotFoundException, ValidationException
+from app.utils.exceptions import NotFoundException
 
 router = APIRouter(prefix="/disponibilidades", tags=["Disponibilidades"])
 
 
-@router.get("/prestador/{prestador_id}")
-async def list_disponibilidades_prestador(
-    prestador_id: str,
-    data_inicio: str = Query(..., description="Data inicial (ISO format)"),
-    data_fim: Optional[str] = Query(None, description="Data final (ISO format)"),
-):
-    """
-    Lista disponibilidades de um prestador
-    
-    - **prestador_id**: ID do prestador
-    - **data_inicio**: Data inicial (formato ISO: 2024-01-15T10:00:00)
-    - **data_fim**: Data final (opcional)
-    """
-    # Verificar se prestador existe
-    prestador = db.get_prestador_by_id(prestador_id)
-    if not prestador:
-        raise NotFoundException("Prestador não encontrado")
-    
-    disponibilidades = db.list_disponibilidades(
-        prestador_id=prestador_id,
-        data_inicio=data_inicio,
-        data_fim=data_fim,
-    )
-    
-    return {
-        "data": [dict(d) for d in disponibilidades],
-        "total": len(disponibilidades),
-    }
-
-
-@router.get("/servico/{servico_id}/horarios")
+@router.get("/horarios-disponiveis")
 async def get_horarios_disponiveis(
-    servico_id: str,
-    data_inicio: str = Query(..., description="Data inicial (ISO format)"),
-    data_fim: Optional[str] = Query(None, description="Data final (ISO format)"),
+    prestador_id: str = Query(..., description="ID do prestador"),
+    dias: int = Query(30, ge=1, le=60, description="Quantos dias à frente buscar"),
 ):
     """
-    Obtém horários disponíveis para um serviço
-    
-    - **servico_id**: ID do serviço
-    - **data_inicio**: Data inicial
-    - **data_fim**: Data final (opcional)
+    Retorna horários disponíveis para agendamento nos próximos X dias.
+    Remove: dias inativos, dias bloqueados, horário de almoço e horários já com 3 agendamentos.
     """
-    # Verificar se serviço existe
-    servico = db.get_servico_by_id(servico_id)
-    if not servico:
-        raise NotFoundException("Serviço não encontrado")
-    
-    # Buscar todos os prestadores que oferecem este serviço
-    # Aqui você precisaria implementar uma query na tabela prestador_servicos
-    # Por enquanto, retornamos uma resposta vazia
-    
-    return {
-        "servico_id": servico_id,
-        "horarios": [],
-    }
-
-
-@router.post("", response_model=DisponibilidadeResponse)
-async def create_disponibilidade(
-    disponibilidade: DisponibilidadeCreate,
-    current_user: dict = Depends(get_current_prestador),
-):
-    """
-    Cria nova disponibilidade (apenas prestador)
-    
-    - **data_hora**: Data e hora da disponibilidade
-    - **ativo**: Se está ativa (padrão: true)
-    """
-    # Validar se data_hora é no futuro
-    try:
-        dt = datetime.fromisoformat(str(disponibilidade.data_hora))
-        if dt <= datetime.now():
-            raise ValidationException("Data e hora devem ser no futuro")
-    except ValueError:
-        raise ValidationException("Formato de data/hora inválido")
-    
-    disponibilidade_data = {
-        "prestador_id": current_user["id"],
-        "data_hora": str(disponibilidade.data_hora),
-        "ativo": disponibilidade.ativo,
-    }
-    
-    nova_disponibilidade = db.create_disponibilidade(disponibilidade_data)
-    if not nova_disponibilidade:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Erro ao criar disponibilidade",
-        )
-    
-    return DisponibilidadeResponse(**nova_disponibilidade)
-
-
-@router.get("/prestador/{prestador_id}/proximas")
-async def get_proximas_disponibilidades(
-    prestador_id: str,
-    limit: int = Query(10, ge=1, le=100),
-):
-    """
-    Obtém próximas disponibilidades de um prestador
-    
-    - **prestador_id**: ID do prestador
-    - **limit**: Quantidade máxima de resultados
-    """
-    # Verificar se prestador existe
     prestador = db.get_prestador_by_id(prestador_id)
     if not prestador:
         raise NotFoundException("Prestador não encontrado")
-    
-    # Buscar disponibilidades a partir de agora
-    data_inicio = datetime.now().isoformat()
-    disponibilidades = db.list_disponibilidades(
-        prestador_id=prestador_id,
-        data_inicio=data_inicio,
-    )
-    
-    # Limitar resultados
-    disponibilidades = disponibilidades[:limit]
-    
-    return {
-        "prestador": PrestadorResponse(**prestador),
-        "disponibilidades": [dict(d) for d in disponibilidades],
-        "total": len(disponibilidades),
-    }
+
+    horarios_config = db.get_horarios_funcionamento()
+    config_por_dia = {h["dia_semana"]: h for h in horarios_config}
+
+    dias_bloqueados = {str(d["data"]) for d in db.get_dias_bloqueados()}
+
+    resultado = []
+    hoje = date.today()
+
+    for i in range(dias):
+        dia = hoje + timedelta(days=i)
+        dia_semana = dia.weekday() + 1  # Python: 0=segunda, ajusta para 0=domingo
+        if dia_semana == 7:
+            dia_semana = 0
+
+        config = config_por_dia.get(dia_semana)
+        if not config or not config["ativo"]:
+            continue
+
+        if str(dia) in dias_bloqueados:
+            continue
+
+        # Gerar horários do dia
+        hora_atual = datetime.combine(dia, datetime.strptime(config["hora_inicio"], "%H:%M:%S").time())
+        hora_fim = datetime.combine(dia, datetime.strptime(config["hora_fim"], "%H:%M:%S").time())
+        almoco_inicio = datetime.combine(dia, datetime.strptime(config["hora_almoco_inicio"], "%H:%M:%S").time())
+        almoco_fim = datetime.combine(dia, datetime.strptime(config["hora_almoco_fim"], "%H:%M:%S").time())
+        intervalo = timedelta(minutes=config["intervalo_minutos"])
+
+        horarios_dia = []
+        while hora_atual < hora_fim:
+            # Pular almoço
+            if almoco_inicio <= hora_atual < almoco_fim:
+                hora_atual += intervalo
+                continue
+
+            # Não mostrar horários no passado
+            if hora_atual > datetime.now():
+                # Contar agendamentos nesse horário
+                count = db.count_agendamentos_por_horario(hora_atual.isoformat(), prestador_id)
+                if count < 3:
+                    horarios_dia.append({
+                        "data_hora": hora_atual.isoformat(),
+                        "hora": hora_atual.strftime("%H:%M"),
+                        "vagas_disponiveis": 3 - count,
+                    })
+
+            hora_atual += intervalo
+
+        if horarios_dia:
+            resultado.append({
+                "data": str(dia),
+                "dia_semana": dia.strftime("%A"),
+                "horarios": horarios_dia,
+            })
+
+    return {"prestador_id": prestador_id, "dias": resultado}
