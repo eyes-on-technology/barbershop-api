@@ -34,23 +34,29 @@ async def login(request: LoginRequest):
     - **password**: Senha do usuário
     """
     email = validate_email(request.email)
-    
-    # Tentar buscar como cliente
+
+    # Verificar credenciais pelo Supabase Auth
+    try:
+        auth_response = db.client.auth.sign_in_with_password({
+            "email": email,
+            "password": request.password,
+        })
+    except Exception:
+        raise InvalidCredentialsException()
+
+    # Buscar dados extras do cliente ou prestador
     cliente = db.get_cliente_by_email(email)
     if cliente:
-        # Aqui você precisaria buscar a senha do auth.users do Supabase
-        # Por enquanto, vamos simular
         user_type = "cliente"
         user_data = cliente
     else:
-        # Tentar buscar como prestador
         prestador = db.get_prestador_by_email(email)
         if prestador:
             user_type = "prestador"
             user_data = prestador
         else:
             raise InvalidCredentialsException()
-    
+
     # Criar token
     access_token_expires = timedelta(minutes=settings.jwt_expiration_minutes)
     access_token = create_access_token(
@@ -61,7 +67,7 @@ async def login(request: LoginRequest):
         },
         expires_delta=access_token_expires,
     )
-    
+
     return AuthResponse(
         token=access_token,
         user={
@@ -87,44 +93,42 @@ async def signup_cliente(request: SignupClienteRequest):
     """
     email = validate_email(request.email)
     password = validate_password(request.password)
-    
-    # Verificar se usuário já existe
+
+    # Verificar se já existe
     if db.get_cliente_by_email(email):
         raise UserAlreadyExistsException()
-    
-    # Criar cliente
+
+    # 1. Criar no Supabase Auth
+    try:
+        auth_response = db.client.auth.sign_up({
+            "email": email,
+            "password": password,
+        })
+        user_id = auth_response.user.id
+    except Exception as e:
+        raise HTTPException(status_code=400, detail="Erro ao criar usuário no Auth")
+
+    # 2. Inserir na tabela clientes com o ID gerado
     cliente_data = {
+        "id": user_id,  # ← mesmo ID do Auth
         "nome": request.nome,
         "email": email,
         "telefone": request.telefone,
     }
-    
+
     cliente = db.create_cliente(cliente_data)
     if not cliente:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Erro ao criar cliente",
-        )
-    
-    # Criar token
-    access_token_expires = timedelta(minutes=settings.jwt_expiration_minutes)
+        raise HTTPException(status_code=400, detail="Erro ao criar cliente")
+
+    # Criar token JWT próprio
     access_token = create_access_token(
-        data={
-            "sub": str(cliente["id"]),
-            "type": "cliente",
-            "email": cliente["email"],
-        },
-        expires_delta=access_token_expires,
+        data={"sub": user_id, "type": "cliente", "email": email},
+        expires_delta=timedelta(minutes=settings.jwt_expiration_minutes),
     )
-    
+
     return AuthResponse(
         token=access_token,
-        user={
-            "id": str(cliente["id"]),
-            "nome": cliente["nome"],
-            "email": cliente["email"],
-            "telefone": cliente.get("telefone"),
-        },
+        user={"id": user_id, "nome": cliente["nome"], "email": cliente["email"], "telefone": cliente.get("telefone")},
         user_type="cliente",
         expires_in=settings.jwt_expiration_minutes * 60,
     )

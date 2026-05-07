@@ -15,7 +15,7 @@ class SupabaseDB:
     def __init__(self):
         self.client: Client = create_client(
             settings.supabase_url,
-            settings.supabase_key,
+            settings.supabase_service_role_key,
         )
 
     def health_check(self) -> bool:
