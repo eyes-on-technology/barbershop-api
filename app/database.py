@@ -466,6 +466,21 @@ class SupabaseDB:
             .execute()
         )
         return response.data
+    
+    def list_clientes(self, page: int = 1, limit: int = 100):
+        offset = (page - 1) * limit
+        response = self.client.table("clientes").select("*", count="exact").range(offset, offset + limit - 1).execute()
+        return response.data or [], response.count or 0
+
+    def list_prestadores(self, page: int = 1, limit: int = 100):
+        offset = (page - 1) * limit
+        response = self.client.table("prestadores").select("*", count="exact").range(offset, offset + limit - 1).execute()
+        return response.data or [], response.count or 0
+
+    def list_servicos(self, page: int = 1, limit: int = 100):
+        offset = (page - 1) * limit
+        response = self.client.table("servicos").select("*", count="exact").range(offset, offset + limit - 1).execute()
+        return response.data or [], response.count or 0
 
 # Instância global do banco de dados
 db = SupabaseDB()
