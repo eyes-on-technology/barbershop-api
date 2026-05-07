@@ -12,6 +12,7 @@ class UserType(str, Enum):
     """Tipos de usuário"""
     CLIENTE = "cliente"
     PRESTADOR = "prestador"
+    ADMIN = "admin"
 
 
 class AgendamentoStatus(str, Enum):
