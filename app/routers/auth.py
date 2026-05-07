@@ -148,27 +148,41 @@ async def signup_prestador(request: SignupPrestadorRequest):
     """
     email = validate_email(request.email)
     password = validate_password(request.password)
-    
+
     # Verificar se usuário já existe
     if db.get_prestador_by_email(email):
         raise UserAlreadyExistsException()
-    
-    # Criar prestador
+
+    # 1. Criar no Supabase Auth
+    try:
+        auth_response = db.client.auth.sign_up({
+            "email": email,
+            "password": password,
+        })
+        user_id = auth_response.user.id
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Erro ao criar usuário no Auth",
+        )
+
+    # 2. Inserir na tabela prestadores com o ID gerado pelo Auth
     prestador_data = {
+        "id": user_id,
         "nome": request.nome,
         "email": email,
         "telefone": request.telefone,
         "especialidade": request.especialidade,
         "bio": request.bio,
     }
-    
+
     prestador = db.create_prestador(prestador_data)
     if not prestador:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Erro ao criar prestador",
         )
-    
+
     # Criar token
     access_token_expires = timedelta(minutes=settings.jwt_expiration_minutes)
     access_token = create_access_token(
@@ -179,7 +193,7 @@ async def signup_prestador(request: SignupPrestadorRequest):
         },
         expires_delta=access_token_expires,
     )
-    
+
     return AuthResponse(
         token=access_token,
         user={
