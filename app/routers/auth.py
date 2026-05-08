@@ -8,16 +8,18 @@ from app.schemas import (
     SignupClienteRequest,
     SignupPrestadorRequest,
     AuthResponse,
+    RefreshTokenRequest,
 )
 from app.auth import (
     create_access_token,
-    hash_password,
     verify_password,
+    get_current_user,
 )
 from app.database import db
 from app.utils.exceptions import (
     InvalidCredentialsException,
     UserAlreadyExistsException,
+    InvalidTokenException,
 )
 from app.utils.validators import validate_email, validate_password
 from app.config import settings
@@ -25,184 +27,174 @@ from app.config import settings
 router = APIRouter(prefix="/auth", tags=["Autenticação"])
 
 
-@router.post("/login", response_model=AuthResponse)
-async def login(request: LoginRequest):
-    """
-    Faz login de um usuário
-    
-    - **email**: Email do usuário
-    - **password**: Senha do usuário
-    """
-    email = validate_email(request.email)
-
-    # Verificar credenciais pelo Supabase Auth
-    try:
-        auth_response = db.client.auth.sign_in_with_password({
-            "email": email,
-            "password": request.password,
-        })
-    except Exception:
-        raise InvalidCredentialsException()
-
-    # Buscar dados extras do cliente ou prestador
-    cliente = db.get_cliente_by_email(email)
-    if cliente:
-        user_type = "cliente"
-        user_data = cliente
-    else:
-        prestador = db.get_prestador_by_email(email)
-        if prestador:
-            user_type = "admin" if prestador.get("is_admin") else "prestador"
-            user_data = prestador
-        else:
-            raise InvalidCredentialsException()
-                
-    # Criar token
-    access_token_expires = timedelta(minutes=settings.jwt_expiration_minutes)
+def _build_auth_response(user_data: dict, user_type: str) -> AuthResponse:
+    """Helper que monta o AuthResponse padronizado"""
     access_token = create_access_token(
         data={
             "sub": str(user_data["id"]),
             "type": user_type,
             "email": user_data["email"],
         },
-        expires_delta=access_token_expires,
+        expires_delta=timedelta(minutes=settings.jwt_expiration_minutes),
     )
+
+    user_payload = {
+        "id": str(user_data["id"]),
+        "nome": user_data["nome"],
+        "email": user_data["email"],
+        "telefone": user_data.get("telefone"),
+    }
+    if user_type in ("prestador", "admin"):
+        user_payload["especialidade"] = user_data.get("especialidade")
 
     return AuthResponse(
         token=access_token,
-        user={
-            "id": str(user_data["id"]),
-            "nome": user_data["nome"],
-            "email": user_data["email"],
-            "telefone": user_data.get("telefone"),
-        },
+        user=user_payload,
         user_type=user_type,
         expires_in=settings.jwt_expiration_minutes * 60,
     )
 
 
+@router.post("/login", response_model=AuthResponse)
+async def login(request: LoginRequest):
+    """
+    Faz login de um usuário.
+
+    Retorna `user_type` = `cliente` | `prestador` | `admin`
+    para o frontend redirecionar para a tela correta.
+    """
+    email = validate_email(request.email)
+
+    # Verificar credenciais no Supabase Auth
+    try:
+        db.client.auth.sign_in_with_password({
+            "email": email,
+            "password": request.password,
+        })
+    except Exception:
+        raise InvalidCredentialsException()
+
+    # Detectar papel: cliente → prestador → admin
+    cliente = db.get_cliente_by_email(email)
+    if cliente:
+        return _build_auth_response(cliente, "cliente")
+
+    prestador = db.get_prestador_by_email(email)
+    if prestador:
+        user_type = "admin" if prestador.get("is_admin") else "prestador"
+        return _build_auth_response(prestador, user_type)
+
+    raise InvalidCredentialsException()
+
+
 @router.post("/signup/cliente", response_model=AuthResponse)
 async def signup_cliente(request: SignupClienteRequest):
     """
-    Cadastro de novo cliente
-    
-    - **nome**: Nome completo
-    - **email**: Email único
-    - **telefone**: Telefone (opcional)
-    - **password**: Senha
+    Cadastro de novo cliente.
     """
     email = validate_email(request.email)
     password = validate_password(request.password)
 
-    # Verificar se já existe
     if db.get_cliente_by_email(email):
         raise UserAlreadyExistsException()
 
-    # 1. Criar no Supabase Auth
     try:
-        auth_response = db.client.auth.sign_up({
-            "email": email,
-            "password": password,
-        })
+        auth_response = db.client.auth.sign_up({"email": email, "password": password})
         user_id = auth_response.user.id
-    except Exception as e:
+    except Exception:
         raise HTTPException(status_code=400, detail="Erro ao criar usuário no Auth")
 
-    # 2. Inserir na tabela clientes com o ID gerado
-    cliente_data = {
-        "id": user_id,  # ← mesmo ID do Auth
+    cliente = db.create_cliente({
+        "id": user_id,
         "nome": request.nome,
         "email": email,
         "telefone": request.telefone,
-    }
-
-    cliente = db.create_cliente(cliente_data)
+    })
     if not cliente:
         raise HTTPException(status_code=400, detail="Erro ao criar cliente")
 
-    # Criar token JWT próprio
-    access_token = create_access_token(
-        data={"sub": user_id, "type": "cliente", "email": email},
-        expires_delta=timedelta(minutes=settings.jwt_expiration_minutes),
-    )
-
-    return AuthResponse(
-        token=access_token,
-        user={"id": user_id, "nome": cliente["nome"], "email": cliente["email"], "telefone": cliente.get("telefone")},
-        user_type="cliente",
-        expires_in=settings.jwt_expiration_minutes * 60,
-    )
+    return _build_auth_response(cliente, "cliente")
 
 
 @router.post("/signup/prestador", response_model=AuthResponse)
 async def signup_prestador(request: SignupPrestadorRequest):
     """
-    Cadastro de novo prestador
-    
-    - **nome**: Nome completo
-    - **email**: Email único
-    - **telefone**: Telefone (opcional)
-    - **especialidade**: Especialidade do prestador
-    - **bio**: Bio (opcional)
-    - **password**: Senha
+    Cadastro de novo prestador.
     """
     email = validate_email(request.email)
     password = validate_password(request.password)
 
-    # Verificar se usuário já existe
     if db.get_prestador_by_email(email):
         raise UserAlreadyExistsException()
 
-    # 1. Criar no Supabase Auth
     try:
-        auth_response = db.client.auth.sign_up({
-            "email": email,
-            "password": password,
-        })
+        auth_response = db.client.auth.sign_up({"email": email, "password": password})
         user_id = auth_response.user.id
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Erro ao criar usuário no Auth",
-        )
+    except Exception:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Erro ao criar usuário no Auth")
 
-    # 2. Inserir na tabela prestadores com o ID gerado pelo Auth
-    prestador_data = {
+    prestador = db.create_prestador({
         "id": user_id,
         "nome": request.nome,
         "email": email,
         "telefone": request.telefone,
         "especialidade": request.especialidade,
         "bio": request.bio,
-    }
-
-    prestador = db.create_prestador(prestador_data)
+    })
     if not prestador:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Erro ao criar prestador",
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Erro ao criar prestador")
 
-    # Criar token
-    access_token_expires = timedelta(minutes=settings.jwt_expiration_minutes)
-    access_token = create_access_token(
-        data={
-            "sub": str(prestador["id"]),
-            "type": "prestador",
-            "email": prestador["email"],
-        },
-        expires_delta=access_token_expires,
-    )
+    return _build_auth_response(prestador, "prestador")
 
-    return AuthResponse(
-        token=access_token,
-        user={
-            "id": str(prestador["id"]),
-            "nome": prestador["nome"],
-            "email": prestador["email"],
-            "telefone": prestador.get("telefone"),
-            "especialidade": prestador["especialidade"],
-        },
-        user_type="prestador",
-        expires_in=settings.jwt_expiration_minutes * 60,
-    )
+
+@router.post("/refresh", response_model=AuthResponse)
+async def refresh_token(current_user: dict = Depends(get_current_user)):
+    """
+    Renova o token JWT do usuário autenticado.
+
+    O interceptor do Axios deve chamar este endpoint automaticamente em caso de 401.
+    Basta enviar o token atual no header `Authorization: Bearer <token>` — 
+    se ainda for válido, retorna um novo token com prazo renovado.
+    """
+    user_id = current_user["id"]
+    user_type = current_user["type"]
+    email = current_user["email"]
+
+    # Recarregar dados atualizados do banco
+    if user_type == "cliente":
+        user_data = db.get_cliente_by_id(user_id)
+    else:
+        user_data = db.get_prestador_by_id(user_id)
+
+    if not user_data:
+        raise InvalidTokenException()
+
+    return _build_auth_response(user_data, user_type)
+
+
+@router.get("/me")
+async def get_me(current_user: dict = Depends(get_current_user)):
+    """
+    Retorna os dados do usuário autenticado, incluindo seu papel (user_type).
+    Útil para o frontend verificar o role sem precisar decodificar o JWT.
+    """
+    user_id = current_user["id"]
+    user_type = current_user["type"]
+
+    if user_type == "cliente":
+        user_data = db.get_cliente_by_id(user_id)
+    else:
+        user_data = db.get_prestador_by_id(user_id)
+
+    if not user_data:
+        raise InvalidTokenException()
+
+    return {
+        "id": str(user_data["id"]),
+        "nome": user_data["nome"],
+        "email": user_data["email"],
+        "telefone": user_data.get("telefone"),
+        "user_type": user_type,
+        "especialidade": user_data.get("especialidade") if user_type != "cliente" else None,
+        "is_admin": user_data.get("is_admin", False),
+    }

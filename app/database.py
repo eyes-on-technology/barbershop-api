@@ -86,6 +86,19 @@ class Database:
         response = self.client.table("prestadores").select("*", count="exact").range(offset, offset + limit - 1).execute()
         return response.data or [], response.count or 0
 
+    def list_prestadores_por_servico(self, servico_id: str) -> List[dict]:
+        """Retorna prestadores que oferecem um determinado serviço"""
+        try:
+            response = (
+                self.client.table("prestador_servicos")
+                .select("prestador_id, prestadores(*)")
+                .eq("servico_id", servico_id)
+                .execute()
+            )
+            return [item["prestadores"] for item in (response.data or []) if item.get("prestadores")]
+        except Exception:
+            return []
+
     # ==================== SERVICOS ====================
 
     def get_servico_by_id(self, servico_id: str) -> Optional[dict]:
@@ -156,6 +169,40 @@ class Database:
         response = self.client.table("agendamentos").delete().eq("id", agendamento_id).execute()
         return len(response.data) > 0
 
+    def count_agendamentos_por_horario(self, data_hora: str, prestador_id: str) -> int:
+        response = (
+            self.client.table("agendamentos")
+            .select("id", count="exact")
+            .eq("data_hora", data_hora)
+            .eq("prestador_id", prestador_id)
+            .in_("status", ["pendente", "confirmado"])
+            .execute()
+        )
+        return response.count or 0
+
+    def list_agendamentos_cliente(self, cliente_id: str, page: int = 1, limit: int = 10, status: Optional[str] = None):
+        offset = (page - 1) * limit
+        query = self.client.table("agendamentos").select("*", count="exact").eq("cliente_id", cliente_id)
+        if status:
+            query = query.eq("status", status)
+        response = query.range(offset, offset + limit - 1).execute()
+        return response.data or [], response.count or 0
+
+    def list_agendamentos_prestador(self, prestador_id: str, page: int = 1, limit: int = 10, status: Optional[str] = None):
+        offset = (page - 1) * limit
+        query = self.client.table("agendamentos").select("*", count="exact").eq("prestador_id", prestador_id)
+        if status:
+            query = query.eq("status", status)
+        response = query.range(offset, offset + limit - 1).execute()
+        return response.data or [], response.count or 0
+
+    def cancelar_outros_agendamentos_horario(self, agendamento_id: str, data_hora: str, prestador_id: str) -> bool:
+        """Cancela todos os agendamentos pendentes do mesmo horário, exceto o aprovado"""
+        self.client.table("agendamentos").update({"status": "cancelado"}).eq(
+            "data_hora", data_hora
+        ).eq("prestador_id", prestador_id).eq("status", "pendente").neq("id", agendamento_id).execute()
+        return True
+
     # ==================== DISPONIBILIDADES ====================
 
     def create_disponibilidade(self, data: dict) -> Optional[dict]:
@@ -172,71 +219,30 @@ class Database:
 
     # ==================== HORARIOS FUNCIONAMENTO ====================
 
-def get_horarios_funcionamento(self) -> list:
-    response = self.client.table("horarios_funcionamento").select("*").order("dia_semana").execute()
-    return response.data or []
+    def get_horarios_funcionamento(self) -> list:
+        response = self.client.table("horarios_funcionamento").select("*").order("dia_semana").execute()
+        return response.data or []
 
-def update_horario_funcionamento(self, dia_semana: int, data: dict) -> Optional[dict]:
-    response = self.client.table("horarios_funcionamento").update(data).eq("dia_semana", dia_semana).execute()
-    return response.data[0] if response.data else None
-
-# ==================== DIAS BLOQUEADOS ====================
-
-def get_dias_bloqueados(self) -> list:
-    response = self.client.table("dias_bloqueados").select("*").order("data").execute()
-    return response.data or []
-
-def create_dia_bloqueado(self, data: dict) -> Optional[dict]:
-    try:
-        response = self.client.table("dias_bloqueados").insert(data).execute()
+    def update_horario_funcionamento(self, dia_semana: int, data: dict) -> Optional[dict]:
+        response = self.client.table("horarios_funcionamento").update(data).eq("dia_semana", dia_semana).execute()
         return response.data[0] if response.data else None
-    except Exception:
-        return None
 
-def delete_dia_bloqueado(self, data: str) -> bool:
-    response = self.client.table("dias_bloqueados").delete().eq("data", data).execute()
-    return len(response.data) > 0
+    # ==================== DIAS BLOQUEADOS ====================
 
-# ==================== AGENDAMENTOS - métodos que faltam ====================
+    def get_dias_bloqueados(self) -> list:
+        response = self.client.table("dias_bloqueados").select("*").order("data").execute()
+        return response.data or []
 
-def count_agendamentos_por_horario(self, data_hora: str, prestador_id: str) -> int:
-    response = (
-        self.client.table("agendamentos")
-        .select("id", count="exact")
-        .eq("data_hora", data_hora)
-        .eq("prestador_id", prestador_id)
-        .in_("status", ["pendente", "confirmado"])
-        .execute()
-    )
-    return response.count or 0
+    def create_dia_bloqueado(self, data: dict) -> Optional[dict]:
+        try:
+            response = self.client.table("dias_bloqueados").insert(data).execute()
+            return response.data[0] if response.data else None
+        except Exception:
+            return None
 
-def list_agendamentos_cliente(self, cliente_id: str, page: int = 1, limit: int = 10, status: Optional[str] = None):
-    offset = (page - 1) * limit
-    query = self.client.table("agendamentos").select("*", count="exact").eq("cliente_id", cliente_id)
-    if status:
-        query = query.eq("status", status)
-    response = query.range(offset, offset + limit - 1).execute()
-    return response.data or [], response.count or 0
+    def delete_dia_bloqueado(self, data: str) -> bool:
+        response = self.client.table("dias_bloqueados").delete().eq("data", data).execute()
+        return len(response.data) > 0
 
-def list_agendamentos_prestador(self, prestador_id: str, page: int = 1, limit: int = 10, status: Optional[str] = None):
-    offset = (page - 1) * limit
-    query = self.client.table("agendamentos").select("*", count="exact").eq("prestador_id", prestador_id)
-    if status:
-        query = query.eq("status", status)
-    response = query.range(offset, offset + limit - 1).execute()
-    return response.data or [], response.count or 0
-
-def cancelar_outros_agendamentos_horario(self, agendamento_id: str, data_hora: str, prestador_id: str) -> bool:
-    """Cancela todos os agendamentos pendentes do mesmo horário, exceto o aprovado"""
-    response = (
-        self.client.table("agendamentos")
-        .update({"status": "cancelado"})
-        .eq("data_hora", data_hora)
-        .eq("prestador_id", prestador_id)
-        .eq("status", "pendente")
-        .neq("id", agendamento_id)
-        .execute()
-    )
-    return True
 
 db = Database()
