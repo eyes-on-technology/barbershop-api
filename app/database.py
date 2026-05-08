@@ -226,4 +226,17 @@ def list_agendamentos_prestador(self, prestador_id: str, page: int = 1, limit: i
     response = query.range(offset, offset + limit - 1).execute()
     return response.data or [], response.count or 0
 
+def cancelar_outros_agendamentos_horario(self, agendamento_id: str, data_hora: str, prestador_id: str) -> bool:
+    """Cancela todos os agendamentos pendentes do mesmo horário, exceto o aprovado"""
+    response = (
+        self.client.table("agendamentos")
+        .update({"status": "cancelado"})
+        .eq("data_hora", data_hora)
+        .eq("prestador_id", prestador_id)
+        .eq("status", "pendente")
+        .neq("id", agendamento_id)
+        .execute()
+    )
+    return True
+
 db = Database()

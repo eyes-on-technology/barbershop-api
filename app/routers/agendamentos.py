@@ -143,16 +143,15 @@ async def get_agendamento(
     agendamento_id: str,
     current_user: dict = Depends(get_current_user),
 ):
-    """
-    Obtém detalhes de um agendamento
-    
-    - **agendamento_id**: ID do agendamento
-    """
     agendamento = db.get_agendamento_by_id(agendamento_id)
     if not agendamento:
         raise NotFoundException("Agendamento não encontrado")
-    
-    # Verificar permissão (cliente ou prestador do agendamento)
+
+    # Admin acessa qualquer agendamento
+    if current_user["type"] == "admin":
+        return AgendamentoResponse(**agendamento)
+
+    # Cliente ou prestador só acessam os seus
     if (
         agendamento["cliente_id"] != current_user["id"]
         and agendamento["prestador_id"] != current_user["id"]
@@ -161,7 +160,7 @@ async def get_agendamento(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Acesso negado",
         )
-    
+
     return AgendamentoResponse(**agendamento)
 
 
@@ -276,38 +275,39 @@ async def aprovar_solicitacao(
     agendamento_id: str,
     current_user: dict = Depends(get_current_prestador),
 ):
-    """
-    Aprova uma solicitação de agendamento (apenas prestador)
-    
-    - **agendamento_id**: ID do agendamento
-    """
     agendamento = db.get_agendamento_by_id(agendamento_id)
     if not agendamento:
         raise NotFoundException("Agendamento não encontrado")
-    
-    # Verificar se é o prestador
+
     if agendamento["prestador_id"] != current_user["id"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Apenas o prestador pode aprovar",
         )
-    
-    # Verificar se está pendente
+
     if agendamento["status"] != "pendente":
         raise ValidationException("Apenas solicitações pendentes podem ser aprovadas")
-    
+
+    # Confirmar este agendamento
     agendamento_atualizado = db.update_agendamento(
         agendamento_id,
         {"status": "confirmado"},
     )
-    
+
     if not agendamento_atualizado:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Erro ao aprovar solicitação",
         )
-    
-    return {"success": True, "message": "Solicitação aprovada com sucesso"}
+
+    # Cancelar automaticamente os outros da fila no mesmo horário
+    db.cancelar_outros_agendamentos_horario(
+        agendamento_id=agendamento_id,
+        data_hora=agendamento["data_hora"],
+        prestador_id=agendamento["prestador_id"],
+    )
+
+    return {"success": True, "message": "Solicitação aprovada e fila do horário cancelada"}
 
 
 @router.put("/solicitacoes/{agendamento_id}/rejeitar")
