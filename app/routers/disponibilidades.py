@@ -56,9 +56,11 @@ async def get_horarios_disponiveis(
         dias_resultado = []
 
         for dia in datas:
-            dia_semana = dia.weekday() + 1  # 0=segunda → 1, domingo → 0
-            if dia_semana == 7:
-                dia_semana = 0
+            # FIX: weekday() → 0=segunda...6=domingo
+            # Banco usa: 0=domingo, 1=segunda...6=sábado
+            # Conversão correta:
+            dia_semana_python = dia.weekday()  # 0=seg, 6=dom
+            dia_semana = (dia_semana_python + 1) % 7  # 0=dom, 1=seg...6=sab
 
             config = config_por_dia.get(dia_semana)
             if not config or not config["ativo"]:
@@ -74,15 +76,17 @@ async def get_horarios_disponiveis(
             almoco_fim = datetime.combine(dia, datetime.strptime(config["hora_almoco_fim"], "%H:%M:%S").time())
             intervalo = timedelta(minutes=config["intervalo_minutos"])
 
+            agora = datetime.now()
             horarios_dia = []
+
             while hora_atual < hora_fim:
                 # Pular almoço
                 if almoco_inicio <= hora_atual < almoco_fim:
                     hora_atual += intervalo
                     continue
 
-                # Não mostrar horários no passado
-                if hora_atual > datetime.now():
+                # FIX: >= para não mostrar o horário exato atual
+                if hora_atual >= agora:
                     count = db.count_agendamentos_por_horario(hora_atual.isoformat(), prestador["id"])
                     if count < 3:
                         horarios_dia.append({
